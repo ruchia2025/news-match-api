@@ -23,43 +23,43 @@ export default {
 
       const data = parsed.data as any[];
 
-      let skipped = 0;
-      const validRecords = [];
+      const logs: string[] = [];
+
+      let validCount = 0;
+      let skippedCount = 0;
+
+      const results = [];
 
       for (let i = 0; i < data.length; i++) {
         const row = data[i];
 
-        // 欠損行・空セル行を除外
-        if (!row || typeof row !== 'object') {
-          skipped++;
-          continue;
-        }
-
         const title = row.title?.trim?.();
         const body = row.body?.trim?.();
 
-        // title・body が両方存在し、文字列であることを確認
-        const isValid =
-          typeof title === 'string' &&
-          title.length > 0 &&
-          typeof body === 'string' &&
-          body.length > 0;
-
-        if (isValid) {
-          validRecords.push({ title, body });
+        if (typeof title === 'string' && title.length > 0 &&
+            typeof body === 'string' && body.length > 0) {
+          validCount++;
+          results.push({ title, body });
         } else {
-          skipped++;
+          skippedCount++;
+          if (i >= data.length - 20) {
+            logs.push(`[DEBUG] Skipped Line ${i + 2} | title: "${title}" | body: "${body}"`);
+          }
         }
       }
 
-      console.log(`[SUMMARY] total=${data.length}, valid=${validRecords.length}, skipped=${skipped}`);
+      logs.push(`[SUMMARY] total=${data.length}, valid=${validCount}, skipped=${skippedCount}`);
 
-      return new Response(JSON.stringify(validRecords, null, 2), {
-        headers: { 'Content-Type': 'application/json' },
+      return new Response(JSON.stringify({
+        logs,
+        sample: results.slice(0, 5) // 最初の5件だけ表示
+      }, null, 2), {
+        headers: { 'Content-Type': 'application/json' }
       });
+
     } catch (err) {
       console.error('[ERROR]', err);
       return new Response('Internal Server Error', { status: 500 });
     }
-  },
+  }
 };
