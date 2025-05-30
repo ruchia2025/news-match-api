@@ -2,64 +2,58 @@ import { Router } from 'itty-router';
 import Papa from 'papaparse';
 
 const router = Router();
+
 let validRecords: { title: string; body: string }[] = [];
 let dataLoaded = false;
 
 async function loadCSV(): Promise<void> {
   if (dataLoaded) return;
 
-  const url = 'https://your-bucket-url/echo.csv'; // ← Cloudflare R2等
+  const url = 'https://your-bucket-url/echo.csv'; // ← 実際のURLに書き換えてください
   const response = await fetch(url);
-  let text = await response.text();
+  const text = await response.text();
 
-  // 途中改行を防ぐ
-  text = text
-    .split('\n')
-    .map(line => line.replace(/\r?\n/g, '').trim()) // 各行の改行除去・トリム
-    .filter(line => line.split(',').length >= 2) // 明らかに列数が足りない行は除外
-    .join('\n');
-
-  const { data, errors } = Papa.parse<string[]>(text, {
-    header: false,
+  const { data, errors, meta } = Papa.parse(text, {
+    header: true,
     skipEmptyLines: true,
+    newline: '', // 改行自動検出
   });
 
-  const headerRow = data[0];
-  const titleIndex = headerRow.findIndex(h => h?.trim() === 'タイトル');
-  const bodyIndex = headerRow.findIndex(h => h?.trim() === '本文');
+  console.log(`[INFO] CSVヘッダー: ${meta.fields?.join(', ')}`);
+  console.log(`[INFO] パース結果 行数: ${data.length}`);
+  if (errors.length > 0) console.log(`[WARN] PapaParseエラー:`, errors);
 
-  if (titleIndex === -1 || bodyIndex === -1) {
-    throw new Error('「タイトル」または「本文」列が見つかりません');
-  }
-
-  validRecords = [];
   let skipped = 0;
+  validRecords = [];
 
-  for (let i = 1; i < data.length; i++) {
-    const row = data[i];
-    if (!Array.isArray(row)) continue;
+  for (let i = 0; i < data.length; i++) {
+    const row = data[i] as any;
+    const lineNo = i + 2; // ヘッダーを除いて+2で人間のCSV行番号
 
-    const title = row[titleIndex];
-    const body = row[bodyIndex];
+    const rawTitle = row["タイトル"];
+    const rawBody = row["本文"];
 
-    if (
-      typeof title === 'string' &&
-      typeof body === 'string' &&
-      title.trim() !== '' &&
-      body.trim() !== ''
-    ) {
-      validRecords.push({ title: title.trim(), body: body.trim() });
+    const title = typeof rawTitle === 'string' ? rawTitle.trim() : '';
+    const body = typeof rawBody === 'string' ? rawBody.trim() : '';
+
+    const isValid = title.length > 0 && body.length > 0;
+
+    if (isValid) {
+      validRecords.push({ title, body });
     } else {
+      console.log(`[SKIP] Line ${lineNo} スキップ:`);
+      console.log(`→ title: ${JSON.stringify(rawTitle)}, body: ${JSON.stringify(rawBody)}`);
       skipped++;
-      if (skipped <= 10) {
-        console.log(`[SKIP] Line ${i + 1}: title=${JSON.stringify(title)}, body=${JSON.stringify(body)}`);
-      }
     }
   }
 
-  console.log(`[INFO] Total rows parsed: ${data.length}`);
-  console.log(`[INFO] Valid rows: ${validRecords.length}`);
-  console.log(`[INFO] Skipped rows: ${skipped}`);
+  console.log(`[INFO] 有効データ数: ${validRecords.length}`);
+  console.log(`[INFO] スキップ行数: ${skipped}`);
+  console.log(`[SAMPLE] 最初の5件:`);
+  validRecords.slice(0, 5).forEach((r, idx) => {
+    console.log(` ${idx + 1}: タイトル="${r.title.slice(0, 30)}", 本文="${r.body.slice(0, 30)}"`);
+  });
+
   dataLoaded = true;
 }
 
@@ -74,10 +68,8 @@ router.get('/api/nearest-news', async (request) => {
   }
 
   const lowerText = userText.toLowerCase();
-  const matched = validRecords.filter(
-    (r) =>
-      r.title.toLowerCase().includes(lowerText) ||
-      r.body.toLowerCase().includes(lowerText)
+  const matched = validRecords.filter(r =>
+    r.title.toLowerCase().includes(lowerText) || r.body.toLowerCase().includes(lowerText)
   );
 
   return new Response(JSON.stringify({ input: userText, matches: matched.slice(0, 5) }), {
