@@ -33,6 +33,16 @@ function simpleSimilarityScore(text1: string, text2: string): number {
   return intersection.length / Math.max(set1.size, 1);
 }
 
+function createCORSResponse(body: any, status: number = 200) {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: {
+      'Content-Type': 'application/json',
+      'Access-Control-Allow-Origin': '*', // ⭐️ CORS対応
+    },
+  });
+}
+
 export default {
   async fetch(request: Request): Promise<Response> {
     const url = new URL(request.url);
@@ -43,10 +53,7 @@ export default {
       await loadJSON();
 
       if (!query.trim()) {
-        return new Response(JSON.stringify({ error: 'Missing query parameter: text' }), {
-          status: 400,
-          headers: { 'Content-Type': 'application/json' },
-        });
+        return createCORSResponse({ error: 'Missing query parameter: text' }, 400);
       }
 
       console.log("🔍 Query:", query);
@@ -57,15 +64,18 @@ export default {
           const score = simpleSimilarityScore(`${r.title} ${r.body}`, query);
           return { ...r, score };
         })
-        .filter((r) => r.score > 0) // ※しきい値は必要に応じて調整
+        .filter((r) => r.score > 0)
         .sort((a, b) => b.score - a.score)
         .slice(0, topN);
 
-      return new Response(JSON.stringify({ input: query, matches: scored }), {
-        headers: { 'Content-Type': 'application/json' },
-      });
+      return createCORSResponse({ input: query, matches: scored });
     }
 
-    return new Response('Not found', { status: 404 });
+    return new Response('Not found', {
+      status: 404,
+      headers: {
+        'Access-Control-Allow-Origin': '*', // 404にも必要
+      },
+    });
   },
 };
