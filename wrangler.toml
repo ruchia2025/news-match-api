@@ -1,5 +1,7 @@
 name = "news-match-api"
+type = "javascript"
 compatibility_date = "2024-06-01"
+main = "src/index.ts"
 
-[[ai]]
-binding = "AI"
+[build]
+command = "npm install"
