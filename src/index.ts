@@ -1,6 +1,7 @@
 let validRecords: { title: string; body: string }[] = [];
 let dataLoaded = false;
 
+// ✅ ニュースデータをロード（1度だけ）
 async function loadJSON(): Promise<void> {
   if (dataLoaded) return;
 
@@ -8,25 +9,28 @@ async function loadJSON(): Promise<void> {
   const response = await fetch(url);
   const json = await response.json();
 
-  console.log("✅ JSON data loaded. Length:", json.length);
-
   validRecords = json
     .map((row: any, i: number) => {
-      const title = typeof row['title'] === 'string' ? row['title'].trim() : '';
-      const body = typeof row['body'] === 'string' ? row['body'].trim() : '';
-
-      if (!title || !body) {
-        console.log(`⚠️ Skipped record at row ${i + 2}: title or body missing.`);
-        return null;
-      }
-
-      return { title, body };
+      const title = typeof row['タイトル'] === 'string' ? row['タイトル'].trim() : '';
+      const body = typeof row['本文'] === 'string' ? row['本文'].trim() : '';
+      return title && body ? { title, body } : null;
     })
     .filter((r): r is { title: string; body: string } => r !== null);
 
-  console.log("✅ validRecords count:", validRecords.length);
-
   dataLoaded = true;
+  console.log(`✅ JSON Loaded: ${validRecords.length} records`);
+}
+
+// ✅ 単純な単語オーバーラップでスコア計算
+function simpleSimilarityScore(text1: string, text2: string): number {
+  const words1 = text1.toLowerCase().split(/\W+/);
+  const words2 = text2.toLowerCase().split(/\W+/);
+
+  const set1 = new Set(words1);
+  const set2 = new Set(words2);
+
+  const intersection = [...set1].filter((w) => set2.has(w));
+  return intersection.length / Math.max(set1.size, 1);
 }
 
 export default {
@@ -35,32 +39,29 @@ export default {
 
     if (url.pathname === '/api/nearest-news' && request.method === 'GET') {
       const query = url.searchParams.get('text') || '';
+      const topN = parseInt(url.searchParams.get('limit') || '3', 10);
       await loadJSON();
 
-      console.log("🔍 Query received:", query);
-
       if (!query.trim()) {
-        console.log("❌ No query text provided.");
         return new Response(JSON.stringify({ error: 'Missing query parameter: text' }), {
           status: 400,
           headers: { 'Content-Type': 'application/json' },
         });
       }
 
-      const keyword = query.toLowerCase();
+      console.log("🔍 Query:", query);
 
-      const matched = validRecords.filter((r) => {
-        const inTitle = r.title.toLowerCase().includes(keyword);
-        const inBody = r.body.toLowerCase().includes(keyword);
-        if (inTitle || inBody) {
-          console.log("✅ Match found:", r.title);
-        }
-        return inTitle || inBody;
-      });
+      // ✅ 類似度スコア計算
+      const scored = validRecords
+        .map((r) => {
+          const score = simpleSimilarityScore(`${r.title} ${r.body}`, query);
+          return { ...r, score };
+        })
+        .filter((r) => r.score > 0.1) // ※しきい値は必要に応じて調整
+        .sort((a, b) => b.score - a.score)
+        .slice(0, topN);
 
-      console.log(`🔎 Total matches found: ${matched.length}`);
-
-      return new Response(JSON.stringify({ input: query, matches: matched.slice(0, 3) }), {
+      return new Response(JSON.stringify({ input: query, matches: scored }), {
         headers: { 'Content-Type': 'application/json' },
       });
     }
