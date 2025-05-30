@@ -1,81 +1,69 @@
-import { Hono } from 'hono'
-import { cors } from 'hono/cors'
+import { Ai } from '@cloudflare/ai';
+import { parse } from 'papaparse';
 
-const app = new Hono()
-app.use(cors())
-
-const CSV_URL = 'https://docs.google.com/spreadsheets/d/e/2PACX-1vQ2ZqgAVqlc3T4KzwL3y_UFJ3zEfEChN_H0zHEytJ_T1aORpAtwZ9QaGNMscUpF92zthmUdfga31S_F/pub?output=csv'
-
-// 類似度計算（文字単位で日本語対応）
-function similarity(a: string, b: string): number {
-  const tokenize = (text: string) => Array.from(text).filter(c => c.trim())
-  const aTokens = tokenize(a)
-  const bTokens = tokenize(b)
-  const setA = new Set(aTokens)
-  const setB = new Set(bTokens)
-  const intersection = new Set([...setA].filter(x => setB.has(x)))
-  const union = new Set([...setA, ...setB])
-  return union.size === 0 ? 0 : intersection.size / union.size
+export interface Env {
+  AI: Ai;
 }
 
-// CSVを取得・パースして {title, url, content} を返す
-async function fetchNews(): Promise<{ title: string; url: string; content: string }[]> {
-  const res = await fetch(CSV_URL)
-  const text = await res.text()
-  const lines = text.split('\n').slice(1).filter(line => line.trim().length > 0)
+export default {
+  async fetch(request: Request, env: Env): Promise<Response> {
+    const url = 'https://script.google.com/macros/s/AKfycbyAnL9GbBH6EZPTEWLqPwCSe1KHXT0RVp7Tl6PYjphEagIdra1UGEXp9UtANbmgMI9x2Q/exec';
+    const response = await fetch(url);
+    const csvText = await response.text();
 
-  let skipCount = 0
-  let shownSkips = 0
+    // CSV をパース（ヘッダーあり）
+    const parsed = parse(csvText, { header: true });
+    const records = parsed.data as any[];
 
-  const news = lines
-    .map((line, idx) => {
-      const cols = line.split(/,(?=(?:[^"]*"[^"]*")*[^"]*$)/)
-      if (cols.length < 8) {
-        skipCount++
-        if (shownSkips < 10) {
-          console.log(`[SKIP] Line ${idx + 2} skipped due to insufficient columns`)
-          shownSkips++
-        }
-        return null
-      }
+    // 有効なレコードだけ抽出
+    const validRecords = records.filter(row => row.title && row.body);
 
-      const title = cols[2]?.replace(/^"|"$/g, "").trim()
-      const body = cols[7]?.replace(/^"|"$/g, "").trim()
-      const url = cols[5]?.replace(/^"|"$/g, "").trim()
-      const content = `${title}。${body}`.trim()
+    // ユーザー入力取得（クエリ or JSON）
+    const { searchParams } = new URL(request.url);
+    const query = searchParams.get('q') || (await request.json().catch(() => null))?.q;
 
-      return (title && body && url && content)
-        ? { title, url, content }
-        : null
-    })
-    .filter((item): item is { title: string; url: string; content: string } => item !== null)
+    if (!query) {
+      return new Response(JSON.stringify({ error: 'No query (q) provided' }), {
+        status: 400,
+        headers: { 'Content-Type': 'application/json' }
+      });
+    }
 
-  console.log(`[fetchNews] loaded ${news.length} items (skipped ${skipCount} invalid rows)`)
-  return news
-}
+    // ★ 日本語処理：文字単位で分かち書き風にする
+    function tokenize(text: string): string[] {
+      return [...text.replace(/\s/g, '')]; // 空白除去して1文字ずつ
+    }
 
-// 最も類似したニュースを返す
-app.get('/api/nearest-news', async (c) => {
-  const input = c.req.query('text') || ''
-  if (!input.trim()) return c.json({ error: 'No input provided' }, 400)
+    // ベクトル化用にタイトル＋本文のペアで処理
+    const texts = validRecords.map(row => `${row.title}。${row.body}`);
+    const userText = query;
 
-  const newsList = await fetchNews()
-  console.log(`[DEBUG] News list length: ${newsList.length}`)
+    const ai = new Ai(env.AI);
 
-  const ranked = newsList
-    .map(item => ({
-      ...item,
-      similarity: similarity(input, item.content)
-    }))
-    .sort((a, b) => b.similarity - a.similarity)
+    const embeddings = await ai.run('@cf/baai/bge-base-ja', {
+      texts: [userText, ...texts]
+    });
 
-  const top = ranked.slice(0, 3).filter(item => item.similarity > 0)
+    const [userVector, ...articleVectors] = embeddings.data;
 
-  for (const item of top) {
-    console.log(`[similarity] ${input} vs "${item.title}" => ${item.similarity.toFixed(3)}`)
+    function cosineSimilarity(a: number[], b: number[]): number {
+      const dot = a.reduce((sum, ai, i) => sum + ai * b[i], 0);
+      const magA = Math.sqrt(a.reduce((sum, ai) => sum + ai * ai, 0));
+      const magB = Math.sqrt(b.reduce((sum, bi) => sum + bi * bi, 0));
+      return dot / (magA * magB);
+    }
+
+    // 類似度を計算してスコア付きで返す
+    const scored = validRecords.map((record, i) => ({
+      title: record.title,
+      body: record.body,
+      score: cosineSimilarity(userVector, articleVectors[i])
+    }));
+
+    scored.sort((a, b) => b.score - a.score);
+
+    return new Response(JSON.stringify(scored.slice(0, 10), null, 2), {
+      headers: { 'Content-Type': 'application/json' }
+    });
   }
-
-  return c.json({ input, results: top })
-})
-
-export default app
+};
