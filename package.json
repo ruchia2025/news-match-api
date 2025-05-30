@@ -2,10 +2,8 @@
   "name": "news-match-api",
   "version": "1.0.0",
   "type": "module",
-  "scripts": {
-    "start": "wrangler dev"
-  },
-  "devDependencies": {
-    "wrangler": "^4.18.0"
+  "main": "src/index.ts",
+  "dependencies": {
+    "@cloudflare/ai": "^0.4.0"
   }
 }
