@@ -1,18 +1,18 @@
 const CSV_URL = "https://script.google.com/macros/s/AKfycbx0Un_DrZIpEsgXacxeRV3rZbOfoFB2fl45O0_09D-FrxgfRrtPw4H5fUy2S2s3BuCqXg/exec";
 
-// ユーティリティ: コサイン類似度
-function cosineSimilarity(a: number[], b: number[]) {
+// Utility: Cosine similarity between two vectors
+function cosineSimilarity(a: number[], b: number[]): number {
   const dot = a.reduce((sum, ai, i) => sum + ai * b[i], 0);
   const magA = Math.sqrt(a.reduce((sum, ai) => sum + ai * ai, 0));
   const magB = Math.sqrt(b.reduce((sum, bi) => sum + bi * bi, 0));
-  return dot / (magA * magB);
+  return magA === 0 || magB === 0 ? -Infinity : dot / (magA * magB);
 }
 
-// 単純な埋め込みベクトル（文字コードベース）
+// Simple embedding generator
 async function embed(text: string): Promise<number[]> {
   const words = text.toLowerCase().split(/\W+/);
   const vec = Array(300).fill(0);
-  for (let word of words) {
+  for (const word of words) {
     for (let i = 0; i < 300; i++) {
       vec[i] += Math.sin(word.charCodeAt(0) * (i + 1));
     }
@@ -20,30 +20,34 @@ async function embed(text: string): Promise<number[]> {
   return vec;
 }
 
-// ニュースCSVの取得とパース
+// CSV取得＆パース
 async function fetchNews(): Promise<{ title: string; url: string; content: string }[]> {
   const res = await fetch(CSV_URL);
   const text = await res.text();
 
   const lines = text.split("\n").slice(1).filter(line => line.trim().length > 0);
 
-  const news = lines.map(line => {
-    const cols = line.split(/,(?=(?:[^"]*"[^"]*")*[^"]*$)/); // カンマの中の引用符を除外
-    const title = cols[2]?.replace(/^"|"$/g, "") || "";
-    const body = cols[7]?.replace(/^"|"$/g, "") || "";
-    const url = cols[5]?.replace(/^"|"$/g, "") || "";
+  const clean = (str: string) =>
+    str?.replace(/\r?\n|\r/g, " ").replace(/^"|"$/g, "").trim();
+
+  const news = lines.map((line, idx) => {
+    const cols = line.split(/,(?=(?:[^"]*"[^"]*")*[^"]*$)/); // カンマ分割（"..."対応）
+    const title = clean(cols[2]);
+    const body = clean(cols[7]);
+    const url = clean(cols[5]);
+
     return {
       title,
       url,
       content: `${title}。${body}`,
     };
-  }).filter(item => item.title && item.url);
+  }).filter(item => item.title && item.url && item.content.trim().length > 0);
 
   console.log(`[fetchNews] loaded ${news.length} items`);
   return news;
 }
 
-// Cloudflare Worker エントリポイント
+// Worker entrypoint
 export default {
   async fetch(request: Request): Promise<Response> {
     const url = new URL(request.url);
@@ -56,8 +60,6 @@ export default {
           status: 400,
         });
       }
-
-      console.log(`[INPUT TEXT] ${text}`);
 
       try {
         const userVec = await embed(text);
@@ -78,11 +80,7 @@ export default {
           const newsVec = await embed(news.content);
           const sim = cosineSimilarity(userVec, newsVec);
 
-          // 🧠 ログ出力（ここが追加点！）
-          console.log(`[DEBUG] Comparing with: ${news.title}`);
-          console.log(`[DEBUG] News vector (first 5): ${newsVec.slice(0, 5).join(", ")}`);
-          console.log(`[DEBUG] User vector (first 5): ${userVec.slice(0, 5).join(", ")}`);
-          console.log(`[DEBUG] Similarity: ${sim}`);
+          console.log(`[similarity] ${text} vs "${news.title}" => ${sim}`);
 
           if (sim > bestScore) {
             bestScore = sim;
@@ -110,7 +108,7 @@ export default {
       }
     }
 
-    return new Response("✅ News-match API is working!", {
+    return new Response("✅ News-match API is running!", {
       headers: { "Content-Type": "text/plain" },
     });
   },
