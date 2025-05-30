@@ -1,99 +1,83 @@
-import { Ai } from '@cloudflare/ai';
-import { parse } from 'papaparse';
+import { Router } from 'itty-router';
+import Papa from 'papaparse';
 
-export interface Env {
-  AI: Ai;
-}
+const router = Router();
 
-export default {
-  async fetch(request: Request, env: Env): Promise<Response> {
-    try {
-      const url = 'https://script.google.com/macros/s/AKfycbyAnL9GbBH6EZPTEWLqPwCSe1KHXT0RVp7Tl6PYjphEagIdra1UGEXp9UtANbmgMI9x2Q/exec';
-      const response = await fetch(url);
-      const csvText = await response.text();
+let validRecords: { title: string; body: string }[] = [];
+let dataLoaded = false;
 
-      // ヘッダー確認ログ
-      const headerLine = csvText.split('\n')[0];
-      console.log(`[DEBUG] CSV header: ${headerLine}`);
+// CSV 読み込みと整形
+async function loadCSV(): Promise<void> {
+  if (dataLoaded) return;
 
-      const parsed = parse(csvText, {
-        header: true,
-        skipEmptyLines: true,
-        transformHeader: (h) => h.trim(),
+  const url = 'https://your-bucket-url/echo.csv'; // ← 適宜置き換え
+  const response = await fetch(url);
+  const text = await response.text();
+
+  const { data, errors } = Papa.parse(text, {
+    header: true,
+    skipEmptyLines: true,
+  });
+
+  console.log(`[INFO] Parsed ${data.length} rows from CSV`);
+  console.log(`[INFO] Parsing errors:`, errors);
+
+  let skipped = 0;
+  validRecords = [];
+
+  for (let i = 0; i < data.length; i++) {
+    const row = data[i] as any;
+    const title = row['タイトル'];
+    const body = row['本文'];
+
+    const isValid =
+      typeof title === 'string' &&
+      typeof body === 'string' &&
+      title.trim() !== '' &&
+      body.trim() !== '';
+
+    if (isValid) {
+      validRecords.push({
+        title: title.trim(),
+        body: body.trim(),
       });
-
-      const records = parsed.data as any[];
-
-      let skippedInvalidRows = 0;
-      const validRecords = [];
-
-      for (let i = 0; i < records.length; i++) {
-        const row = records[i];
-        const title = row['タイトル']?.trim();
-        const body = row['本文']?.trim();
-
-        if (title && body && typeof title === 'string' && typeof body === 'string') {
-          validRecords.push({ title, body });
-        } else {
-          skippedInvalidRows++;
-          console.log(`[SKIP] Line ${i + 2} skipped: title or body is missing or invalid`);
-        }
-      }
-
-      console.log(`[DEBUG] Parsed ${records.length} records, kept ${validRecords.length}, skipped ${skippedInvalidRows}`);
-
-      if (validRecords.length === 0) {
-        return new Response(JSON.stringify({ error: 'No valid news data available after processing CSV.' }), {
-          status: 500,
-          headers: { 'Content-Type': 'application/json' }
-        });
-      }
-
-      // ユーザーのクエリ取得
-      const { searchParams } = new URL(request.url);
-      const query = searchParams.get('q') || (await request.json().catch(() => null))?.q;
-
-      if (!query) {
-        return new Response(JSON.stringify({ error: 'No query (q) provided' }), {
-          status: 400,
-          headers: { 'Content-Type': 'application/json' }
-        });
-      }
-
-      // 検索対象テキスト配列（タイトル + 本文）
-      const texts = validRecords.map(row => `${row.title}。${row.body}`);
-      const ai = new Ai(env.AI);
-      const embeddings = await ai.run('@cf/baai/bge-base-ja', {
-        texts: [query, ...texts]
-      });
-
-      const [userVector, ...articleVectors] = embeddings.data;
-
-      function cosineSimilarity(a: number[], b: number[]): number {
-        const dot = a.reduce((sum, ai, i) => sum + ai * b[i], 0);
-        const magA = Math.sqrt(a.reduce((sum, ai) => sum + ai * ai, 0));
-        const magB = Math.sqrt(b.reduce((sum, bi) => sum + bi * bi, 0));
-        return dot / (magA * magB);
-      }
-
-      const scored = validRecords.map((record, i) => ({
-        title: record.title,
-        body: record.body,
-        score: cosineSimilarity(userVector, articleVectors[i])
-      }));
-
-      scored.sort((a, b) => b.score - a.score);
-
-      return new Response(JSON.stringify(scored.slice(0, 10), null, 2), {
-        headers: { 'Content-Type': 'application/json' }
-      });
-
-    } catch (error: any) {
-      console.error(`[ERROR] ${error.message || error}`);
-      return new Response(JSON.stringify({ error: 'Internal error occurred.', detail: error.message || String(error) }), {
-        status: 500,
-        headers: { 'Content-Type': 'application/json' }
-      });
+    } else {
+      console.log(`[SKIP] Line ${i + 2} skipped due to insufficient columns`);
+      console.log(`→ title: ${JSON.stringify(title)}, body: ${JSON.stringify(body)}`);
+      skipped++;
     }
   }
+
+  console.log(`[INFO] Loaded ${validRecords.length} valid records`);
+  console.log(`[INFO] Skipped ${skipped} invalid rows`);
+
+  dataLoaded = true;
+}
+
+// 類似ニュース取得API
+router.get('/api/nearest-news', async (request) => {
+  const userText = request.query?.text || '';
+
+  await loadCSV();
+
+  if (!userText.trim()) {
+    return new Response(JSON.stringify({ error: 'Missing query parameter: text' }), {
+      status: 400,
+    });
+  }
+
+  const lowerText = userText.toLowerCase();
+  const matched = validRecords.filter((r) =>
+    r.title.toLowerCase().includes(lowerText) || r.body.toLowerCase().includes(lowerText)
+  );
+
+  return new Response(JSON.stringify({ input: userText, matches: matched.slice(0, 5) }), {
+    headers: { 'Content-Type': 'application/json' },
+  });
+});
+
+router.all('*', () => new Response('Not found', { status: 404 }));
+
+export default {
+  fetch: (req: Request) => router.handle(req),
 };
