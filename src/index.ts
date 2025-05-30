@@ -24,7 +24,8 @@ async function embed(text: string): Promise<number[]> {
 async function fetchNews(): Promise<{ title: string; url: string; content: string }[]> {
   const res = await fetch(CSV_URL);
   const text = await res.text();
-  const lines = text.split("\n").slice(1); // skip header
+  const lines = text.split("\n").slice(1).filter(line => line.trim().length > 0);
+
 
   const news = lines.map(line => {
     const cols = line.split(/,(?=(?:[^"]*"[^"]*")*[^"]*$)/); // CSV safe split
