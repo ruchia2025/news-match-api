@@ -11,8 +11,8 @@ async function loadJSON(): Promise<void> {
 
   validRecords = json
     .map((row: any, i: number) => {
-      const title = typeof row['タイトル'] === 'string' ? row['タイトル'].trim() : '';
-      const body = typeof row['本文'] === 'string' ? row['本文'].trim() : '';
+      const title = typeof row['title'] === 'string' ? row['title'].trim() : '';
+      const body = typeof row['body'] === 'string' ? row['body'].trim() : '';
       return title && body ? { title, body } : null;
     })
     .filter((r): r is { title: string; body: string } => r !== null);
