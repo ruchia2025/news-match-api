@@ -1,4 +1,3 @@
-// src/index.ts
 const CSV_URL = "https://script.google.com/macros/s/AKfycbzODIn3eJpMBNkj8rrrUcAb6lVAFSirutEG_syHmMfNPRK_6MxpPY7OWv8EqARYA1Igeg/exec";
 
 // Utility: Cosine similarity between two vectors
@@ -9,7 +8,7 @@ function cosineSimilarity(a: number[], b: number[]) {
   return dot / (magA * magB);
 }
 
-// Lightweight SBERT-like embedding (代替用API or簡易疑似ベクトル)
+// Simple embedding (代替ベクトル生成)
 async function embed(text: string): Promise<number[]> {
   const words = text.toLowerCase().split(/\W+/);
   const vec = Array(300).fill(0);
@@ -21,14 +20,15 @@ async function embed(text: string): Promise<number[]> {
   return vec;
 }
 
+// CSVを取得してニュースリストに変換
 async function fetchNews(): Promise<{ title: string; url: string; content: string }[]> {
   const res = await fetch(CSV_URL);
   const text = await res.text();
+
   const lines = text.split("\n").slice(1).filter(line => line.trim().length > 0);
 
-
   const news = lines.map(line => {
-    const cols = line.split(/,(?=(?:[^"]*"[^"]*")*[^"]*$)/); // CSV safe split
+    const cols = line.split(/,(?=(?:[^"]*"[^"]*")*[^"]*$)/); // カンマ区切り対応
     const title = cols[2]?.replace(/^"|"$/g, "") || "";
     const body = cols[7]?.replace(/^"|"$/g, "") || "";
     const url = cols[5]?.replace(/^"|"$/g, "") || "";
@@ -39,6 +39,8 @@ async function fetchNews(): Promise<{ title: string; url: string; content: strin
     };
   }).filter(item => item.title && item.url);
 
+  // ✅ デバッグ出力
+  console.log(`[fetchNews] loaded ${news.length} items`);
   return news;
 }
 
@@ -58,6 +60,14 @@ export default {
       try {
         const userVec = await embed(text);
         const newsList = await fetchNews();
+        console.log(`[DEBUG] News list length: ${newsList.length}`);
+
+        if (newsList.length === 0) {
+          return new Response(JSON.stringify({ error: "No news data available" }), {
+            headers: { "Content-Type": "application/json" },
+            status: 500,
+          });
+        }
 
         let bestMatch = null;
         let bestScore = -Infinity;
@@ -84,14 +94,14 @@ export default {
           }
         );
       } catch (e) {
-        return new Response(JSON.stringify({ error: "Internal error", details: e }), {
+        return new Response(JSON.stringify({ error: "Internal error", details: `${e}` }), {
           headers: { "Content-Type": "application/json" },
           status: 500,
         });
       }
     }
 
-    // default route
+    // Default root
     return new Response("✅ News-match API is working!", {
       headers: { "Content-Type": "text/plain" },
     });
