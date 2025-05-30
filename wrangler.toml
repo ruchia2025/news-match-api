@@ -4,6 +4,3 @@ main = "src/index.ts"
 
 [build]
 command = "npm install"
-
-[site]
-bucket = ""
