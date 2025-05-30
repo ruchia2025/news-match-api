@@ -11,12 +11,40 @@ export default {
     const response = await fetch(url);
     const csvText = await response.text();
 
-    // CSV をパース（ヘッダーあり）
-    const parsed = parse(csvText, { header: true });
+    // CSV をパース（ヘッダーあり） - 強化された設定を適用
+    const parsed = parse(csvText, {
+      header: true,
+      skipEmptyLines: true, // 空行をスキップ
+      transformHeader: (h) => h.trim(), // ヘッダーの前後空白を除去
+    });
     const records = parsed.data as any[];
 
-    // 有効なレコードだけ抽出
-    const validRecords = records.filter(row => row.title && row.body);
+    let skippedInvalidRows = 0; // スキップされた無効な行の数をカウント
+
+    // 有効なレコードだけ抽出 - 強化されたフィルタリングロジックを適用
+    const validRecords = records.filter(row => {
+      const title = row.title?.trim(); // undefined対策と前後空白除去
+      const body = row.body?.trim();   // undefined対策と前後空白除去
+
+      // title と body がどちらも存在し、空文字でなく、かつ文字列型であることを確認
+      const isValid = title && body && typeof title === 'string' && typeof body === 'string';
+
+      if (!isValid) {
+        skippedInvalidRows++; // 無効な行をカウント
+      }
+      return isValid;
+    });
+
+    // ログにスキップされた行数を出力（Cloudflareのログ上限を考慮し、個別のconsole.logは避ける）
+    console.log(`Skipped ${skippedInvalidRows} invalid rows during CSV parsing.`);
+
+    // 有効なニュースデータがない場合にエラーを返す
+    if (validRecords.length === 0) {
+      return new Response(JSON.stringify({ error: 'No valid news data available after processing CSV.' }), {
+        status: 500, // 内部サーバーエラーとして扱う
+        headers: { 'Content-Type': 'application/json' }
+      });
+    }
 
     // ユーザー入力取得（クエリ or JSON）
     const { searchParams } = new URL(request.url);
