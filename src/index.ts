@@ -57,7 +57,7 @@ export default {
           const score = simpleSimilarityScore(`${r.title} ${r.body}`, query);
           return { ...r, score };
         })
-        .filter((r) => r.score > 0.1) // ※しきい値は必要に応じて調整
+        .filter((r) => r.score > 0) // ※しきい値は必要に応じて調整
         .sort((a, b) => b.score - a.score)
         .slice(0, topN);
 
