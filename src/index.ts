@@ -18,29 +18,38 @@ export default {
       const parsed = parse(csvText, {
         header: true,
         skipEmptyLines: true,
-        transformHeader: (h) => h.trim(),
+        transformHeader: h => h.trim(),
       });
 
       const data = parsed.data as any[];
-      const validRecords = [];
+
       let skipped = 0;
+      const validRecords = [];
 
       for (let i = 0; i < data.length; i++) {
         const row = data[i];
-        const title = row?.title?.trim?.();
-        const body = row?.body?.trim?.();
 
-        // Papaparse sometimes includes rows as {} if they’re malformed
-        const keys = Object.keys(row ?? {});
-        if (!title || !body || keys.length < 2) {
-          if (skipped < 10) {
-            console.warn(`[SKIP] Line ${i + 2} skipped: keys=[${keys.join(', ')}]`);
-          }
+        // 欠損行・空セル行を除外
+        if (!row || typeof row !== 'object') {
           skipped++;
           continue;
         }
 
-        validRecords.push({ title, body });
+        const title = row.title?.trim?.();
+        const body = row.body?.trim?.();
+
+        // title・body が両方存在し、文字列であることを確認
+        const isValid =
+          typeof title === 'string' &&
+          title.length > 0 &&
+          typeof body === 'string' &&
+          body.length > 0;
+
+        if (isValid) {
+          validRecords.push({ title, body });
+        } else {
+          skipped++;
+        }
       }
 
       console.log(`[SUMMARY] total=${data.length}, valid=${validRecords.length}, skipped=${skipped}`);
