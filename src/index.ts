@@ -6,20 +6,22 @@ export interface Env {
 
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
-    const url = new URL(request.url);
-    const key = url.searchParams.get('key') || 'echo.csv';
-
-    console.log(`[INFO] Requested key: ${key}`);
-
     try {
+      const url = new URL(request.url);
+      const key = url.searchParams.get('key') || 'echo.csv';
+
+      console.log(`[DEBUG] Fetching CSV from key: ${key}`);
       const object = await env.BUCKET.get(key);
+
       if (!object) {
-        console.error('[ERROR] CSV file not found in R2');
+        console.warn("[ERROR] CSV file not found in R2 bucket.");
         return new Response('CSV file not found', { status: 404 });
       }
 
       const csvText = await object.text();
-      console.log(`[INFO] CSV loaded, size: ${csvText.length} chars`);
+      console.log("[DEBUG] CSV text successfully read");
+
+      const expectedHeaders = ['title', 'body'];
 
       const parsed = parse(csvText, {
         header: true,
@@ -27,35 +29,41 @@ export default {
         transformHeader: (h) => h.trim(),
       });
 
-      console.log(`[INFO] Parsed ${parsed.data.length} rows`);
-      console.log(`[INFO] Found ${parsed.errors.length} parse errors`);
-
-      parsed.errors.forEach((error, i) => {
-        console.warn(`[PARSE ERROR ${i}] Row ${error.row}: ${error.message}`);
+      console.log(`[DEBUG] Parsed ${parsed.data.length} rows`);
+      console.log(`[DEBUG] Found ${parsed.errors.length} parse errors`);
+      parsed.errors.slice(0, 5).forEach((e, i) => {
+        console.warn(`[PARSE ERROR ${i}]`, JSON.stringify(e));
       });
 
-      const validRecords = (parsed.data as any[]).filter((row, index) => {
+      const data = parsed.data as any[];
+      let skipped = 0;
+
+      const validRecords = data.filter((row, i) => {
+        const keys = Object.keys(row);
+        const isHeaderMismatch = !expectedHeaders.every((h) => keys.includes(h));
         const title = row.title?.trim?.();
         const body = row.body?.trim?.();
-
-        const isValid = title && body && typeof title === 'string' && typeof body === 'string';
+        const isValid = !isHeaderMismatch && title && body;
 
         if (!isValid) {
-          console.warn(`[SKIP] Line ${index + 2} skipped due to missing title/body`);
-          console.warn(`[SKIP] Raw row: ${JSON.stringify(row)}`);
+          if (skipped < 10) {
+            console.warn(`[SKIP] Line ${i + 2} skipped. Keys=[${keys.join(', ')}], title="${title}", body="${body}"`);
+          }
+          skipped++;
+          return false;
         }
-
-        return isValid;
+        return true;
       });
 
-      console.log(`[INFO] Valid records: ${validRecords.length}`);
+      console.log(`[SUMMARY] Total=${data.length}, Valid=${validRecords.length}, Skipped=${skipped}`);
 
       return new Response(JSON.stringify(validRecords, null, 2), {
         headers: { 'Content-Type': 'application/json' },
       });
+
     } catch (err) {
-      console.error('[FATAL ERROR]', err);
-      return new Response('Internal Server Error', { status: 500 });
+      console.error("[ERROR] Unexpected failure", err);
+      return new Response("Internal Server Error", { status: 500 });
     }
   },
 };
