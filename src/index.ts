@@ -6,97 +6,100 @@ const router = Router();
 let validRecords: { title: string; body: string }[] = [];
 let dataLoaded = false;
 
-// CSVロード関数
 async function loadCSV(): Promise<void> {
   if (dataLoaded) return;
 
-  const url = 'https://script.google.com/macros/s/AKfycbyAnL9GbBH6EZPTEWLqPwCSe1KHXT0RVp7Tl6PYjphEagIdra1UGEXp9UtANbmgMI9x2Q/exec'; // ✅ 正しいURLに置き換え済み
-
-  let text = '';
+  const url = 'https://script.google.com/macros/s/AKfycbyAnL9GbBH6EZPTEWLqPwCSe1KHXT0RVp7Tl6PYjphEagIdra1UGEXp9UtANbmgMI9x2Q/exec';
+  console.log(`[STEP] Fetching CSV from ${url}`);
+  
   try {
-    const response = await fetch(url);
-    console.log(`[DEBUG] fetch status: ${response.status}`);
-    if (!response.ok) {
-      console.error(`[ERROR] Fetch failed: ${response.statusText}`);
+    const res = await fetch(url);
+    console.log(`[DEBUG] Fetch status: ${res.status}`);
+    if (!res.ok) {
+      console.error(`[ERROR] CSV fetch failed: ${res.statusText}`);
       return;
     }
-    text = await response.text();
-    console.log(`[DEBUG] Fetched CSV content (first 300 chars):\n${text.slice(0, 300)}`);
-  } catch (err) {
-    console.error(`[ERROR] Fetch exception:`, err);
-    return;
-  }
 
-  const { data, errors, meta } = Papa.parse(text, {
-    header: true,
-    skipEmptyLines: true,
-    transformHeader: (h) => h.trim(), // ✅ ヘッダーのズレ防止
-  });
+    const csvText = await res.text();
+    console.log(`[STEP] CSV text received (${csvText.length} chars)`);
 
-  console.log(`[DEBUG] Headers: ${meta.fields?.join(', ')}`);
-  if (errors.length > 0) {
-    console.warn(`[WARN] Parse errors:`, errors);
-  }
+    const { data, errors, meta } = Papa.parse(csvText, {
+      header: true,
+      skipEmptyLines: true,
+      transformHeader: (h) => h.trim(),
+    });
 
-  if (!meta.fields?.includes('タイトル') || !meta.fields.includes('本文')) {
-    console.error(`[ERROR] CSV is missing required headers: タイトル or 本文`);
-    return;
-  }
-
-  validRecords = [];
-  let skipped = 0;
-
-  for (let i = 0; i < data.length; i++) {
-    const row = data[i] as any;
-    const rawTitle = row['タイトル'];
-    const rawBody = row['本文'];
-
-    const title = typeof rawTitle === 'string' ? rawTitle.trim() : '';
-    const body = typeof rawBody === 'string' ? rawBody.trim() : '';
-
-    if (title && body) {
-      validRecords.push({ title, body });
-    } else {
-      console.warn(`[SKIP] Line ${i + 2} skipped - title: ${JSON.stringify(title)}, body: ${JSON.stringify(body)}`);
-      skipped++;
+    console.log(`[STEP] Headers parsed: ${meta.fields?.join(', ')}`);
+    if (!meta.fields?.includes('タイトル') || !meta.fields.includes('本文')) {
+      console.error(`[ERROR] 必要なカラム「タイトル」「本文」が見つかりません`);
+      return;
     }
+
+    if (errors.length > 0) console.warn(`[WARN] Parsing errors:`, errors);
+
+    validRecords = [];
+    let skipped = 0;
+
+    for (let i = 0; i < data.length; i++) {
+      const row = data[i] as any;
+      const title = typeof row['タイトル'] === 'string' ? row['タイトル'].trim() : '';
+      const body = typeof row['本文'] === 'string' ? row['本文'].trim() : '';
+
+      if (title && body) {
+        validRecords.push({ title, body });
+      } else {
+        console.log(`[SKIP] row ${i + 2}: title=[${title}], body=[${body}]`);
+        skipped++;
+      }
+    }
+
+    console.log(`[RESULT] validRecords=${validRecords.length}, skipped=${skipped}`);
+    dataLoaded = true;
+  } catch (e) {
+    console.error(`[ERROR] Exception during loadCSV:`, e);
   }
-
-  console.log(`[INFO] Valid records: ${validRecords.length}`);
-  console.log(`[INFO] Skipped rows: ${skipped}`);
-
-  dataLoaded = true;
 }
 
-// 類似ニュースAPI
 router.get('/api/nearest-news', async (request) => {
-  const userText = request.query?.text || '';
+  const url = new URL(request.url);
+  const query = url.searchParams.get('text') || '';
+
+  console.log(`\n===== New Request =====`);
+  console.log(`[STEP] URL: ${request.url}`);
+  console.log(`[STEP] Query parameter: text = "${query}"`);
+
   await loadCSV();
 
-  if (!userText.trim()) {
-    return new Response(JSON.stringify({ error: 'Missing query parameter: text' }), { status: 400 });
-  }
-
   if (validRecords.length === 0) {
+    console.error(`[ERROR] No valid news data available`);
     return new Response(JSON.stringify({ error: 'No news data available (CSV empty or malformed)' }), {
       status: 500,
     });
   }
 
-  const keyword = userText.toLowerCase();
-  const matches = validRecords.filter(
-    (r) => r.title.toLowerCase().includes(keyword) || r.body.toLowerCase().includes(keyword)
+  if (!query.trim()) {
+    console.error(`[ERROR] クエリ text が空`);
+    return new Response(JSON.stringify({ error: 'Missing query parameter: text' }), {
+      status: 400,
+    });
+  }
+
+  const keyword = query.toLowerCase();
+  const matched = validRecords.filter(
+    (r) =>
+      r.title.toLowerCase().includes(keyword) || r.body.toLowerCase().includes(keyword)
   );
 
-  return new Response(JSON.stringify({ input: userText, matches }), {
+  console.log(`[STEP] ${matched.length} 件マッチ`);
+  matched.forEach((m, i) => console.log(`→ ${i + 1}: ${m.title.slice(0, 30)}...`));
+
+  return new Response(JSON.stringify({ input: query, matches: matched }), {
     headers: { 'Content-Type': 'application/json' },
   });
 });
 
-// fallback
 router.all('*', () => new Response('Not found', { status: 404 }));
 
-// entry point
 export default {
   fetch: (req: Request) => router.handle(req),
 };
