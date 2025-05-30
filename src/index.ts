@@ -9,26 +9,26 @@ let dataLoaded = false;
 async function loadCSV(): Promise<void> {
   if (dataLoaded) return;
 
-  const url =
-    'https://script.google.com/macros/s/AKfycbyAnL9GbBH6EZPTEWLqPwCSe1KHXT0RVp7Tl6PYjphEagIdra1UGEXp9UtANbmgMI9x2Q/exec';
-  console.log(`[STEP] Fetching CSV from ${url}`);
-
   try {
-    const res = await fetch(url);
-    if (!res.ok) {
-      console.error(`[ERROR] CSV fetch failed: ${res.statusText}`);
-      return;
+    const url = 'https://script.google.com/macros/s/AKfycbyAnL9GbBH6EZPTEWLqPwCSe1KHXT0RVp7Tl6PYjphEagIdra1UGEXp9UtANbmgMI9x2Q/exec';
+    console.log(`[STEP1] Fetching CSV from: ${url}`);
+
+    const response = await fetch(url);
+    console.log(`[STEP1] Response status: ${response.status} ok: ${response.ok}`);
+
+    if (!response.ok) {
+      throw new Error(`[ERROR] Failed to fetch CSV: ${response.statusText}`);
     }
 
-    const csvText = await res.text();
-    console.log(`[STEP] CSV text received (${csvText.length} chars)`);
+    const csvText = await response.text();
+    console.log(`[STEP1] CSV text length: ${csvText.length}`);
 
     const { data, errors, meta } = Papa.parse(csvText, {
       header: true,
       skipEmptyLines: true,
       transformHeader: (h) => h.trim(),
       dynamicTyping: false,
-      newline: '\n', // 改行コード明示で安定化
+      newline: '\n',
     });
 
     console.log(`[DEBUG] Papa.parse: total rows = ${data.length}`);
@@ -75,6 +75,7 @@ async function loadCSV(): Promise<void> {
 
     console.log(`[RESULT] validRecords = ${validRecords.length}, skipped = ${skipped}`);
     dataLoaded = true;
+
   } catch (e) {
     console.error(`[ERROR] Exception during loadCSV:`, e);
   }
