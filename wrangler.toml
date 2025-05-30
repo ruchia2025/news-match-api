@@ -1,0 +1,14 @@
+cd news-match-api
+echo 'name = "news-match-api"
+compatibility_date = "2025-05-30"
+main = "src/index.ts"
+
+[build]
+command = "npm install"
+
+[site]
+bucket = ""' > wrangler.toml
+
+git add wrangler.toml
+git commit -m "add wrangler.toml"
+git push origin main
