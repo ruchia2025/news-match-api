@@ -28,7 +28,11 @@ async function loadCSV(): Promise<void> {
       skipEmptyLines: true,
       transformHeader: (h) => h.trim(),
       dynamicTyping: false,
+      newline: '\n', // 改行コード明示で安定化
     });
+
+    console.log(`[DEBUG] Papa.parse: total rows = ${data.length}`);
+    console.log(`[DEBUG] Headers: ${meta.fields?.join(', ')}`);
 
     if (!meta.fields?.includes('タイトル') || !meta.fields.includes('本文')) {
       console.error(`[ERROR] 必要なカラム「タイトル」「本文」が見つかりません`);
@@ -41,13 +45,13 @@ async function loadCSV(): Promise<void> {
 
     validRecords = [];
     let skipped = 0;
+    const maxSkipLogs = 300;
 
     for (let i = 0; i < data.length; i++) {
       const row = data[i];
 
       if (typeof row !== 'object' || row == null) {
-        skipped++;
-        if (skipped <= 5) {
+        if (skipped++ < maxSkipLogs) {
           console.warn(`[SKIP] row ${i + 2}: invalid object`);
         }
         continue;
@@ -59,18 +63,17 @@ async function loadCSV(): Promise<void> {
       if (title && body) {
         validRecords.push({ title, body });
       } else {
-        skipped++;
-        if (skipped <= 5) {
+        if (skipped++ < maxSkipLogs) {
           console.warn(`[SKIP] row ${i + 2}: title=[${title}], body=[${body}]`);
         }
       }
     }
 
-    if (skipped > 5) {
-      console.warn(`[SKIP] ...and ${skipped - 5} more rows`);
+    if (skipped >= maxSkipLogs) {
+      console.warn(`[SKIP] ...and more than ${maxSkipLogs} rows skipped`);
     }
 
-    console.log(`[RESULT] validRecords=${validRecords.length}, skipped=${skipped}`);
+    console.log(`[RESULT] validRecords = ${validRecords.length}, skipped = ${skipped}`);
     dataLoaded = true;
   } catch (e) {
     console.error(`[ERROR] Exception during loadCSV:`, e);
@@ -108,7 +111,9 @@ router.get('/api/nearest-news', async (request) => {
 
   const keyword = query.toLowerCase();
   const matched = validRecords.filter(
-    (r) => r.title.toLowerCase().includes(keyword) || r.body.toLowerCase().includes(keyword)
+    (r) =>
+      r.title.toLowerCase().includes(keyword) ||
+      r.body.toLowerCase().includes(keyword)
   );
 
   console.log(`[STEP] ${matched.length} 件マッチ`);
