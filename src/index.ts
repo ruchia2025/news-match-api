@@ -3,46 +3,43 @@ import Papa from 'papaparse';
 
 const router = Router();
 
-// CSVデータ格納用
 let validRecords: { title: string; body: string }[] = [];
 let dataLoaded = false;
 
-// CSV読み込み＆整形関数
+// CSVロード関数
 async function loadCSV(): Promise<void> {
   if (dataLoaded) return;
 
-  const url = 'https://your-bucket-url/echo.csv'; // ← 本番用に置き換え
+  const url = 'https://script.google.com/macros/s/AKfycbyAnL9GbBH6EZPTEWLqPwCSe1KHXT0RVp7Tl6PYjphEagIdra1UGEXp9UtANbmgMI9x2Q/exec'; // ✅ 正しいURLに置き換え済み
 
   let text = '';
   try {
     const response = await fetch(url);
+    console.log(`[DEBUG] fetch status: ${response.status}`);
     if (!response.ok) {
-      console.error(`[ERROR] CSV fetch failed: ${response.status} ${response.statusText}`);
+      console.error(`[ERROR] Fetch failed: ${response.statusText}`);
       return;
     }
     text = await response.text();
+    console.log(`[DEBUG] Fetched CSV content (first 300 chars):\n${text.slice(0, 300)}`);
   } catch (err) {
-    console.error(`[ERROR] Failed to fetch CSV:`, err);
+    console.error(`[ERROR] Fetch exception:`, err);
     return;
   }
 
   const { data, errors, meta } = Papa.parse(text, {
     header: true,
     skipEmptyLines: true,
+    transformHeader: (h) => h.trim(), // ✅ ヘッダーのズレ防止
   });
 
-  console.log(`[INFO] Parsed ${data.length} rows`);
+  console.log(`[DEBUG] Headers: ${meta.fields?.join(', ')}`);
   if (errors.length > 0) {
     console.warn(`[WARN] Parse errors:`, errors);
   }
 
-  if (!meta.fields?.includes("タイトル") || !meta.fields.includes("本文")) {
-    console.error(`[ERROR] Missing required columns. Found headers: ${meta.fields?.join(', ')}`);
-    return;
-  }
-
-  if (data.length === 0) {
-    console.warn(`[WARN] CSV parsed but no data found`);
+  if (!meta.fields?.includes('タイトル') || !meta.fields.includes('本文')) {
+    console.error(`[ERROR] CSV is missing required headers: タイトル or 本文`);
     return;
   }
 
@@ -51,8 +48,8 @@ async function loadCSV(): Promise<void> {
 
   for (let i = 0; i < data.length; i++) {
     const row = data[i] as any;
-    const rawTitle = row["タイトル"];
-    const rawBody = row["本文"];
+    const rawTitle = row['タイトル'];
+    const rawBody = row['本文'];
 
     const title = typeof rawTitle === 'string' ? rawTitle.trim() : '';
     const body = typeof rawBody === 'string' ? rawBody.trim() : '';
@@ -65,7 +62,9 @@ async function loadCSV(): Promise<void> {
     }
   }
 
-  console.log(`[INFO] Loaded ${validRecords.length} valid records, skipped ${skipped} rows`);
+  console.log(`[INFO] Valid records: ${validRecords.length}`);
+  console.log(`[INFO] Skipped rows: ${skipped}`);
+
   dataLoaded = true;
 }
 
@@ -75,34 +74,29 @@ router.get('/api/nearest-news', async (request) => {
   await loadCSV();
 
   if (!userText.trim()) {
-    return new Response(JSON.stringify({ error: 'Missing query parameter: text' }), {
-      status: 400,
-    });
+    return new Response(JSON.stringify({ error: 'Missing query parameter: text' }), { status: 400 });
   }
 
   if (validRecords.length === 0) {
-    return new Response(JSON.stringify({ error: 'No news data available (CSV missing or empty or malformed)' }), {
+    return new Response(JSON.stringify({ error: 'No news data available (CSV empty or malformed)' }), {
       status: 500,
     });
   }
 
-  const lowerText = userText.toLowerCase();
-  const matched = validRecords.filter(r =>
-    r.title.toLowerCase().includes(lowerText) || r.body.toLowerCase().includes(lowerText)
+  const keyword = userText.toLowerCase();
+  const matches = validRecords.filter(
+    (r) => r.title.toLowerCase().includes(keyword) || r.body.toLowerCase().includes(keyword)
   );
 
-  return new Response(JSON.stringify({
-    input: userText,
-    matches: matched.slice(0, 5),
-  }), {
+  return new Response(JSON.stringify({ input: userText, matches }), {
     headers: { 'Content-Type': 'application/json' },
   });
 });
 
-// その他のルーティング
+// fallback
 router.all('*', () => new Response('Not found', { status: 404 }));
 
-// Cloudflare Worker エントリーポイント
+// entry point
 export default {
   fetch: (req: Request) => router.handle(req),
 };
